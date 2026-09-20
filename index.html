@@ -373,7 +373,7 @@ label.btn{display:inline-block}
       <p>お手持ちの <code>sudoku_solve.py</code> と同じ Peter Norvig 方式（制約伝播＋MRV 探索）を JavaScript に移植。解けないときは自信の薄いマスから順に第2候補へ差し替え、解が1つに定まる読み方を探します。</p>
     </div>
   </div>
-  <p class="build">BUILD 2026-09-15 01:28</p>
+  <p class="build">BUILD 2026-09-20 22:35</p>
 </div>
 
 <script>
@@ -777,7 +777,9 @@ function warpGray(g, w, h, H, size) {
 const GRID_PX = 702, CELL = GRID_PX / 9;
 /* 二値化のつまみ（k: Sauvola の係数、abs/rel: 最低限必要な濃さの差） */
 const BIN = { k: 0.14, abs: 9, rel: 0.06, smooth: 1, second: 1, secondP: 0.98, redo: 0.90,
-              cAbs: 0.24, cRel: 0.48 };
+              cAbs: 0.24, cRel: 0.48,
+              /* stem: 細い成分を「1」として残す最低限の芯の通りぐあい（罫線の切れ端は下回る） */
+              stem: 0.55 };
 
 /* 大津の二値化：クラス間分散が最大になるしきい値を選ぶ */
 function otsu(arr) {
@@ -828,6 +830,7 @@ function inkComponents(bin, w, h, ox, oy) {
   ox = ox || 0; oy = oy || 0;
   const label = new Int32Array(w * h);
   const stack = new Int32Array(w * h);
+  const seen = new Int32Array(w * h);            // いま調べている成分の画素（芯の通りぐあいを測るため）
   const minH = CELL * 0.22, maxH = CELL * 0.95, minW = CELL * 0.05, maxW = CELL * 0.85;
   const metas = [];
   let cur = 0;
@@ -838,6 +841,7 @@ function inkComponents(bin, w, h, ox, oy) {
     let n = 0, minx = 1e9, maxx = -1, miny = 1e9, maxy = -1;
     while (sp > 0) {
       const p = stack[--sp];
+      seen[n] = p;
       n++;
       const x = p % w, y = (p / w) | 0;
       if (x < minx) minx = x;
@@ -859,7 +863,18 @@ function inkComponents(bin, w, h, ox, oy) {
     // 罫線の切れ端を除く：細長いのに中身がすかすか／ちょうど罫線の上にある
     const cx = (minx + maxx) / 2 + ox, cy = (miny + maxy) / 2 + oy;
     const thinW = bw <= CELL * 0.20, thinH = bh <= CELL * 0.20;
-    if ((thinW || thinH) && density < 0.50) continue;
+    // 「1」は細いので、すかすかかどうかだけでは罫線の切れ端と区別できない。
+    // そこで芯の通りぐあいを見る：いちばん画素の多い1列（1行）が縦（横）の長さの何割を占めるか。
+    // 「1」の縦棒は上から下まで通るので 1 に近く、斜めに走る罫線の切れ端は小さい。
+    if ((thinW || thinH) && density < 0.50) {
+      const cols = new Int32Array(bw), rows = new Int32Array(bh);
+      for (let k = 0; k < n; k++) { const p = seen[k]; cols[p % w - minx]++; rows[((p / w) | 0) - miny]++; }
+      let mc = 0, mr = 0;
+      for (let k = 0; k < bw; k++) if (cols[k] > mc) mc = cols[k];
+      for (let k = 0; k < bh; k++) if (rows[k] > mr) mr = rows[k];
+      const stem = thinW ? mc / bh : mr / bw;
+      if (stem < BIN.stem) continue;
+    }
     if (thinW && Math.abs(cx - Math.round(cx / CELL) * CELL) < CELL * 0.08) continue;
     if (thinH && Math.abs(cy - Math.round(cy / CELL) * CELL) < CELL * 0.08) continue;
     metas.push({ id: cur, n, minx, maxx, miny, maxy, pixels: [] });
