@@ -370,10 +370,10 @@ label.btn{display:inline-block}
     </div>
     <div>
       <h3>求解と自動修正</h3>
-      <p>Peter Norvig 方式（制約伝播＋MRV 探索）を JavaScript に移植。解けないときは自信の薄いマスから順に第2候補へ差し替え、解が1つに定まる読み方を探します。</p>
+      <p>お手持ちの <code>sudoku_solve.py</code> と同じ Peter Norvig 方式（制約伝播＋MRV 探索）を JavaScript に移植。解けないときは自信の薄いマスから順に第2候補へ差し替え、解が1つに定まる読み方を探します。</p>
     </div>
   </div>
-  <p class="build">BUILD 2026-09-20 22:35</p>
+  <p class="build">BUILD 2026-09-21 21:21</p>
 </div>
 
 <script>
@@ -868,7 +868,7 @@ function inkComponents(bin, w, h, ox, oy) {
     // 「1」の縦棒は上から下まで通るので 1 に近く、斜めに走る罫線の切れ端は小さい。
     if ((thinW || thinH) && density < 0.50) {
       const cols = new Int32Array(bw), rows = new Int32Array(bh);
-      for (let k = 0; k < n; k++) { const p = seen[k]; cols[p % w - minx]++; rows[((p / w) | 0) - miny]++; }
+      for (let k = 0; k < n; k++) { const q = seen[k]; cols[q % w - minx]++; rows[((q / w) | 0) - miny]++; }
       let mc = 0, mr = 0;
       for (let k = 0; k < bw; k++) if (cols[k] > mc) mc = cols[k];
       for (let k = 0; k < bh; k++) if (rows[k] > mr) mr = rows[k];
@@ -1761,15 +1761,87 @@ const LADDER2 = [
   ["連鎖（場合分けの合流）", 7.0, tForcingChain],
 ];
 /* <<SCORING>> js_difficulty.js から build.py が差し込む（3つのアプリで同じ式にするため） */
+/* <<SCORING-BEGIN>> ここから下は build.py がソルバーにも差し込む */
+/* ==========================================================================
+   ひと回りの収穫（見つけにくさ）
+   --------------------------------------------------------------------------
+   紙と鉛筆で解く人は、候補メモを書かずに盤面をひと通り走査します。
+     ・残り1マス（行・列・ブロックの空きが1つ）
+     ・交差法／行・列の走査（そのユニットで、その数字が入れるマスが1つ）
+   そのひと回りで見つかった手を全部打ち、また走査する。これを繰り返して、
+   「1周あたり何マス埋まったか」を数えます。
+   やさしい問題はひと回りでどんどん埋まり、難しい問題は1周して1個しか見つかりません。
+   手筋の種類が同じでも、ここに大きな差が出ます。
+   ========================================================================== */
+function sweepYield(cells) {
+  const b = newBoard(cells);
+  let rounds = 0, placed = 0;
+  for (let guard = 0; guard < 200; guard++) {
+    const mv = [], seen = new Set();
+    const add = (i, d) => { if (!seen.has(i)) { seen.add(i); mv.push([i, d]); } };
+    for (const u of ALLUNITS2) {                       // 残り1マス
+      let e = -1, c = 0;
+      for (const i of u) if (!b.grid[i]) { c++; e = i; }
+      if (c === 1) { const d = maskBits(b.cand[e])[0]; if (d) add(e, d); }
+    }
+    for (const u of ALLUNITS2) {                       // 交差法・行/列の走査
+      for (let d = 1; d <= 9; d++) {
+        let has = false;
+        for (const i of u) if (b.grid[i] === d) { has = true; break; }
+        if (has) continue;
+        let spots = 0, last = -1;
+        for (const i of u) if (!b.grid[i] && (b.cand[i] & BITV[d])) { spots++; last = i; }
+        if (spots === 1) add(last, d);
+      }
+    }
+    if (!mv.length) break;
+    rounds++;
+    for (const [i, d] of mv) if (!b.grid[i]) { putB(b, i, d); placed++; }
+  }
+  return rounds ? placed / rounds : 0;
+}
+
+/* 難易度の帯。
+   人が違いを感じ取れるのは、やさしい側のわずかな差のほうです。
+   逆にレベル 4 と 5 の差は、解いていて区別が付きません。
+   そこで帯の幅は、下は狭く、上に行くほど広く取り、いちばん上はひとくくりにします。 */
 const LEVELS = [
-  [1.9, "やさしい", "単一候補と隠れ単一だけで解ける"],
-  [2.9, "ふつう", "ロック候補・二国同盟まで"],
-  [4.1, "むずかしい", "同盟や X-Wing が要る"],
-  [5.1, "かなり難しい", "ウィング・剣魚が要る"],
-  [6.5, "とても難しい", "単一数字の連鎖や XY 鎖をたどる"],
-  [7.3, "最高難度", "2択の両方をたどる連鎖が要る"],
-  [9.9, "超高難度", "3択の場合分けをすべてたどる必要がある"],
+  [1.25, "入門"],
+  [1.50, "やさしい"],
+  [1.80, "ふつう"],
+  [2.20, "やや難しい"],
+  [2.90, "むずかしい"],
+  [3.80, "とても難しい"],
+  [5.20, "最高難度"],
+  [99.0, "究極難易度"],      // 連鎖をたどらないと解けない領域
 ];
+
+/* どこまでの手筋が要るか。帯とは別立てにして、山場の点数から引く */
+const TECH_NOTE = [
+  [1.2, "単一候補だけで解ける"],
+  [1.9, "単一候補と隠れ単一だけで解ける"],
+  [2.4, "ロック候補まで"],
+  [3.2, "二国・三国同盟まで"],
+  [4.1, "X-Wing やウィングが要る"],
+  [5.1, "剣魚・XYZ ウィングが要る"],
+  [6.9, "彩色や XY 鎖をたどる必要がある"],
+  [99.0, "場合分けの合流（連鎖）が要る"],
+];
+
+/* 星の数＝帯の番号＋その帯の中での位置。
+   レベルの数字をそのまま星にすると、やさしい側が 1 個目の星の中に潰れてしまうため。
+   いちばん上の帯だけは青天井なので、7 に近づくようになだらかに詰める。 */
+const STAR_MAX = LEVELS.length;
+function starValue(score) {
+  const last = LEVELS.length - 1;
+  for (let i = 0; i <= last; i++) {
+    const lo = i ? LEVELS[i - 1][0] : 0;
+    if (i === last) return last + (1 - Math.exp(-Math.max(0, score - lo) / 1.6));
+    if (score <= LEVELS[i][0])
+      return i + Math.max(0, Math.min(1, (score - lo) / (LEVELS[i][0] - lo)));
+  }
+  return last + 1;
+}
 
 function analyseDifficulty(cells) {
   const b = newBoard(cells);
@@ -1807,19 +1879,32 @@ function analyseDifficulty(cells) {
     const lone = (hardest * hardest + (n - 1)) / (hardest + (n - 1));   // 山場1回＋残り全部が単一候補
     gain = Math.max(0, body - lone);
   }
-  const score = hardest + Math.min(0.90, 0.45 * gain) + Math.min(0.10, 0.0015 * n);
-  const lv = LEVELS.find(l => score <= l[0]) || LEVELS[LEVELS.length - 1];
-  const techLv = LEVELS.find(l => hardest <= l[0]) || LEVELS[LEVELS.length - 1];
+  /* 見つけにくさ：ひと回りの収穫が少ないほど上げる。
+     3.5 マス／周をふつうとして、その半分なら＋1段ぶん。
+     ただし難しい手筋が要る問題では、手筋の深さのほうが体感を決めるので効きを弱める。 */
+  const yield1 = n ? sweepYield(cells) : 0;
+  const wFind = Math.min(1, Math.max(0.30, 1 - 0.5 * (hardest - 1.5)));
+  const find = n ? wFind * Math.min(0.90, Math.max(-0.35, Math.log2(3.5 / Math.max(yield1, 0.5)))) : 0;
+  const score = n ? hardest + Math.min(0.90, 0.45 * gain) + find + Math.min(0.10, 0.0015 * n) : 0;
+  const shown = Math.round(score * 100) / 100;      // 表示する数字とラベルを必ず一致させる
+  const lv = LEVELS.find(l => shown <= l[0]) || LEVELS[LEVELS.length - 1];
+  const tech = TECH_NOTE.find(l => hardest <= l[0]) || TECH_NOTE[TECH_NOTE.length - 1];
   let remaining = 0;
   for (let i = 0; i < 81; i++) if (!b.grid[i]) remaining++;
   return {
     solved, steps, snaps, used, hardest, hardSteps,
     body: Math.round(body * 100) / 100,
     gain: Math.round(gain * 100) / 100,
-    score: Math.round(score * 100) / 100,
+    sweep: Math.round(yield1 * 100) / 100,
+    find: Math.round(find * 100) / 100,
+    score: shown,
     label: solved ? lv[1] : "要仮置き",
-    note: solved ? techLv[2] + (lv !== techLv ? "。しかも、その手筋を何度も使う" : "")
-                 : "この手筋の範囲では最後まで解けない",
+    stars: Math.round(starValue(shown) * 100) / 100,
+    note: solved
+      ? tech[1]
+        + (find >= 0.30 ? "。しかも、次の一手が見つけにくい" : "")
+        + (Math.min(0.90, 0.45 * gain) >= 0.30 ? "。その手筋を何度も使う" : "")
+      : "この手筋の範囲では最後まで解けない",
     remaining
   };
 }
@@ -1848,7 +1933,7 @@ function showVerdict(cells) {
     ? "理論だけで解ける ― 良い問題"
     : "この手筋の範囲では解けない ― 当てはめ（仮置き）が必要";
   $("#vNote").textContent = analysis.solved
-    ? `${analysis.note}。レベル ${analysis.score}（山場は ${analysis.hardest} の手筋を ${analysis.hardSteps} 回、全体の手ごたえ ${analysis.body}、全 ${analysis.steps.length} 手・${ms} ms）`
+    ? `${analysis.note}。レベル ${analysis.score}（山場は ${analysis.hardest} の手筋を ${analysis.hardSteps} 回、全体の手ごたえ ${analysis.body}、ひと回りの収穫 ${analysis.sweep} マス、全 ${analysis.steps.length} 手・${ms} ms）`
     : `手筋だけでは ${analysis.remaining} マスが残りました。ここから先は「どれかを仮に置いて、矛盾したら戻る」しかありません。`;
   $("#vTechs").innerHTML = [...analysis.used.entries()]
     .map(([t, n]) => `<code>${t} ×${n}</code>`).join("");
