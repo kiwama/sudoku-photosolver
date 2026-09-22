@@ -192,6 +192,31 @@ label.btn{display:inline-block}
   font-family:inherit;background:var(--ai-soft);color:var(--ai);
   padding:1px 6px;border-radius:2px;margin-right:6px;display:inline-block;
 }
+/* コード番号から読み込む欄 */
+.codein{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.codein label{font-size:11px;letter-spacing:.12em;color:var(--pencil)}
+.codein .row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.codein input{
+  flex:1 1 18em;min-width:0;font:inherit;font-size:12.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  padding:8px 10px;border:1px solid var(--rule-strong);border-radius:2px;
+  background:var(--surface);color:var(--sumi);
+}
+.codein input:focus-visible{outline:2px solid var(--ai);outline-offset:1px}
+
+/* コード番号（メーカー・プリンターと共通の番号） */
+.codebox{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border-top:1px solid var(--rule);padding-top:10px;margin-top:2px;
+}
+.codebox .codelabel{font-size:11px;letter-spacing:.12em;color:var(--pencil);flex:none}
+.codebox .codeval{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  background:var(--ai-soft);color:var(--ai);padding:4px 8px;border-radius:2px;
+  word-break:break-all;flex:1 1 16em;min-width:0;user-select:all;
+}
+@media (max-width:520px){.codebox .codeval{font-size:11px}}
+
 .explain{
   border:1px solid var(--midori);border-radius:3px;background:var(--surface);
   padding:10px 12px;display:flex;flex-direction:column;gap:6px;
@@ -301,13 +326,21 @@ label.btn{display:inline-block}
         <label class="btn btn--primary filebtn">写真を選ぶ<input type="file" id="fileInput" accept="image/*"></label>
         <button class="btn" id="sampleBtn" type="button">サンプル写真</button>
       </div>
+      <div class="codein">
+        <label for="codeIn">コード番号から読み込む（写真のかわりに）</label>
+        <div class="row">
+          <input type="text" id="codeIn" spellcheck="false" autocomplete="off" autocapitalize="off"
+                 placeholder="SD1-XXXXXXX-XXXXXXX-…　81文字の並びも可">
+          <button class="btn" id="codeInBtn" type="button">読み込む</button>
+        </div>
+      </div>
       <dl class="readout">
         <div><dt>盤面検出</dt><dd id="statDetect">—</dd></div>
         <div><dt>読み取れた数字</dt><dd id="statDigits">—</dd></div>
         <div><dt>要確認</dt><dd id="statLow">—</dd></div>
         <div><dt>処理時間</dt><dd id="statTime">—</dd></div>
       </dl>
-      <figure class="warp">
+      <figure class="warp" id="warpFig">
         <canvas id="warpCanvas" width="702" height="702"></canvas>
         <figcaption>四隅から射影変換で起こした盤面。ここを 9×9 に等分し、インクの連結成分をマスごとにまとめて識別器にかけています。自信の薄いマスは、そのマスの中だけで大津の二値化をやり直してもう一度判定します。</figcaption>
       </figure>
@@ -351,6 +384,12 @@ label.btn{display:inline-block}
         </div>
         <p class="verdict-note" id="vNote"></p>
         <p class="techlist" id="vTechs"></p>
+        <div class="codebox" id="codeBox">
+          <span class="codelabel">コード番号</span>
+          <code class="codeval" id="codeVal"></code>
+          <button class="btn btn--sm" id="codeCopyBtn" type="button">コピー</button>
+        </div>
+        <p class="verdict-note" id="codeNote">この番号を数独メーカー／数独プリンターに貼ると、同じ問題を呼び出せます。</p>
         <div class="controls">
           <button class="btn" id="explainBtn" type="button">解き方を1手ずつ見る</button>
         </div>
@@ -370,10 +409,10 @@ label.btn{display:inline-block}
     </div>
     <div>
       <h3>求解と自動修正</h3>
-      <p>Peter Norvig 方式（制約伝播＋MRV 探索）を JavaScript に移植。解けないときは自信の薄いマスから順に第2候補へ差し替え、解が1つに定まる読み方を探します。</p>
+      <p>お手持ちの <code>sudoku_solve.py</code> と同じ Peter Norvig 方式（制約伝播＋MRV 探索）を JavaScript に移植。解けないときは自信の薄いマスから順に第2候補へ差し替え、解が1つに定まる読み方を探します。</p>
     </div>
   </div>
-  <p class="build">BUILD 2026-09-21 21:21</p>
+  <p class="build">BUILD 2026-09-22 14:50</p>
 </div>
 
 <script>
@@ -1241,6 +1280,41 @@ $("#clearBtn").addEventListener("click", () => {
   render();
   setStatus("盤面を空にしました。写真を読み込むか、直接入力してください。");
 });
+/* ---- コード番号（または81文字の並び）から問題を読み込む ---- */
+function loadFromCode(text) {
+  const t = (text || "").trim();
+  if (!t) { setStatus("コード番号を入れてから「読み込む」を押してください。", "warn"); return false; }
+  const cells = parsePuzzleLine(t);
+  if (!cells) {
+    setStatus("コード番号として読めませんでした。文字が抜けていないか確かめてください。"
+      + "（<code>SD1-…</code> の番号か、<code>53..7....</code> のような81文字の並びが入ります）", "err");
+    return false;
+  }
+  state.recognized = cells.slice();          // 「認識結果に戻す」の戻り先にもする
+  state.given = cells.slice();
+  state.cand = Array(81).fill(null);
+  state.low = Array(81).fill(false);
+  state.fixed = Array(81).fill(false);
+  state.solved = Array(81).fill("");
+  if (expOn) exitExplain();
+  $("#verdict").hidden = true;
+  // 写真の欄は、いま盤面に出ているものと食い違うので、いったん隠す
+  srcCtx.clearRect(0, 0, srcCanvas.width, srcCanvas.height);
+  warpCtx.clearRect(0, 0, warpCanvas.width, warpCanvas.height);
+  $("#stage").hidden = true;
+  $("#warpFig").hidden = true;
+  $("#statDetect").textContent = "コード番号から";
+  $("#statTime").textContent = "—";
+  const { givenCount } = render();
+  setStatus("コード番号から <b>" + givenCount + " 個</b>のヒントを読み込みました。「解く」を押してください。", "ok");
+  if (window.innerWidth <= 860) {
+    try { boardEl.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) { boardEl.scrollIntoView(); }
+  }
+  return true;
+}
+$("#codeInBtn").addEventListener("click", () => loadFromCode($("#codeIn").value));
+$("#codeIn").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); loadFromCode($("#codeIn").value); } });
+
 $("#restoreBtn").addEventListener("click", () => {
   state.given = state.recognized.slice();
   state.solved = Array(81).fill("");
@@ -1265,6 +1339,8 @@ async function processImage(source, label) {
     if (!out) { setStatus("盤面の形が読み取れませんでした。盤面全体が正面から大きく写っている写真だとうまくいきます。", "err"); return; }
     const { quad, detected, warped, cells } = out;
 
+    $("#stage").hidden = false;          // コード番号から読んだあとに写真へ戻ってきたとき
+    $("#warpFig").hidden = false;
     const wimg = warpCtx.createImageData(GRID_PX, GRID_PX);
     for (let i = 0, p = 0; i < warped.length; i++, p += 4) {
       wimg.data[p] = wimg.data[p + 1] = wimg.data[p + 2] = warped[i];
@@ -1366,7 +1442,15 @@ const stage = $("#stage");
 ["dragenter", "dragover"].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.add("dragover"); }));
 ["dragleave", "drop"].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.remove("dragover"); }));
 stage.addEventListener("drop", e => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
-window.addEventListener("paste", e => { for (const f of e.clipboardData.files) { loadFile(f); break; } });
+window.addEventListener("paste", e => {
+  if (e.target === $("#codeIn")) return;                       // コード番号の欄への貼り付けはそのまま
+  for (const f of e.clipboardData.files) { loadFile(f); break; }
+  // 画像ではなくコード番号らしい文字列を貼ったときは、それを読み込む
+  if (!e.clipboardData.files.length) {
+    const t = (e.clipboardData.getData("text") || "").trim();
+    if (/^SD1[-\s]/i.test(t)) { e.preventDefault(); $("#codeIn").value = t; loadFromCode(t); }
+  }
+});
 
 /* ==========================================================================
    6. 難易度の判定 ― 人が使う手筋を、やさしい順に試す
@@ -1760,6 +1844,115 @@ const LADDER2 = [
   ["水母", 6.0, b => tFish(b, 4, 6.0)],
   ["連鎖（場合分けの合流）", 7.0, tForcingChain],
 ];
+/* <<PUZZLECODE>> puzzle_code.js から build.py が差し込む（3つのアプリで同じ番号にするため） */
+/* ==========================================================================
+   コード番号：81マスの問題を、可逆な短い文字列にする
+   --------------------------------------------------------------------------
+   * 下位 81 ビット … どのマスがヒントかを表す旗（1マス1ビット）
+   * その上       … ヒントの数字を、盤面の順に 9進法で並べたもの
+   この2つを 1 個の大きな整数にまとめ、32進法の文字にする。
+   旗を先に読めばヒントの個数が分かるので、桁数を別に書かなくてよい。
+   文字は Crockford 方式（I・L・O・U を使わない）なので、
+   I→1、L→1、O→0 と読み替えれば、多少の書き写し間違いは吸収できる。
+   ========================================================================== */
+
+const CODE_ALPHA = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const CODE_VAL = (() => {
+  const m = new Map();
+  for (let i = 0; i < CODE_ALPHA.length; i++) m.set(CODE_ALPHA[i], i);
+  m.set("I", 1); m.set("L", 1); m.set("O", 0); m.set("U", 0);   // 読み替え
+  return m;
+})();
+const CODE_PREFIX = "SD1";
+const CODE_GROUP = 7;
+
+/* ---- 32進法の文字列にする ---- */
+function bigToBase32(v) {
+  if (v === 0n) return "0";
+  let s = "";
+  while (v > 0n) { s = CODE_ALPHA[Number(v & 31n)] + s; v >>= 5n; }
+  return s;
+}
+function base32ToBig(s) {
+  let v = 0n;
+  for (const ch of s) {
+    const d = CODE_VAL.get(ch);
+    if (d === undefined) return null;
+    v = (v << 5n) | BigInt(d);
+  }
+  return v;
+}
+/* ---- 検査文字（書き写し間違いに気づくため） ---- */
+function codeCheck(body) {
+  let sum = 0;
+  for (let i = 0; i < body.length; i++) sum = (sum * 33 + CODE_VAL.get(body[i]) + 1) % 32;
+  return CODE_ALPHA[sum];
+}
+
+/* ---- 盤面（81要素の配列。空きは "" か "0" か "."）→ コード番号 ---- */
+function encodePuzzle(cells) {
+  let mask = 0n, digits = 0n, n = 0;
+  for (let i = 0; i < 81; i++) {
+    const c = String(cells[i] ?? "").trim();
+    const d = /^[1-9]$/.test(c) ? +c : 0;
+    if (d) { mask |= 1n << BigInt(i); digits = digits * 9n + BigInt(d - 1); n++; }
+  }
+  if (!n) return null;
+  const body = bigToBase32((digits << 81n) | mask);
+  const full = body + codeCheck(body);
+  const parts = [];
+  for (let i = 0; i < full.length; i += CODE_GROUP) parts.push(full.slice(i, i + CODE_GROUP));
+  return CODE_PREFIX + "-" + parts.join("-");
+}
+
+/* ---- コード番号 → 盤面（読めなければ null） ---- */
+function decodePuzzle(text) {
+  if (typeof text !== "string") return null;
+  let s = text.toUpperCase().replace(/[^0-9A-Z]/g, "")
+              .replace(/[IL]/g, "1").replace(/[OU]/g, "0");  // 紛らわしい文字を読み替える
+  if (s.startsWith("SD1") || s.startsWith("5D1")) s = s.slice(3);   // S を 5 と書いた場合も許す
+  else return null;
+  if (s.length < 2) return null;
+  const body = s.slice(0, -1), chk = s.slice(-1);
+  for (const ch of body + chk) if (!CODE_VAL.has(ch)) return null;
+  if (CODE_VAL.get(codeCheck(body)) !== CODE_VAL.get(chk)) return null;
+  const v = base32ToBig(body);
+  if (v === null) return null;
+  const mask = v & ((1n << 81n) - 1n);
+  let rest = v >> 81n;
+  const idx = [];
+  for (let i = 0; i < 81; i++) if ((mask >> BigInt(i)) & 1n) idx.push(i);
+  if (!idx.length) return null;
+  const cells = Array(81).fill("");
+  for (let k = idx.length - 1; k >= 0; k--) {
+    cells[idx[k]] = String(Number(rest % 9n) + 1);
+    rest /= 9n;
+  }
+  if (rest !== 0n) return null;
+  return cells;
+}
+
+/* ---- 81文字の並び（"53..7...." のような形）も受け付ける ---- */
+function parseGridText(line) {
+  const s = line.replace(/[^0-9.\-_]/g, "").replace(/[.\-_]/g, "0");
+  if (s.length !== 81) return null;
+  const cells = Array(81).fill("");
+  for (let i = 0; i < 81; i++) if (s[i] !== "0") cells[i] = s[i];
+  return cells;
+}
+
+/* ---- 1行を、コード番号でも 81文字でも読めるようにする ---- */
+function parsePuzzleLine(line) {
+  const t = line.trim();
+  if (!t || t.startsWith("#") || t.startsWith("//")) return null;
+  return decodePuzzle(t) || parseGridText(t);
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { encodePuzzle, decodePuzzle, parseGridText, parsePuzzleLine };
+}
+/* <<END PUZZLECODE>> */
+
 /* <<SCORING>> js_difficulty.js から build.py が差し込む（3つのアプリで同じ式にするため） */
 /* <<SCORING-BEGIN>> ここから下は build.py がソルバーにも差し込む */
 /* ==========================================================================
@@ -1813,7 +2006,7 @@ const LEVELS = [
   [2.90, "むずかしい"],
   [3.80, "とても難しい"],
   [5.20, "最高難度"],
-  [99.0, "究極難易度"],      // 連鎖をたどらないと解けない領域
+  [99.0, "究極難度"],      // 連鎖をたどらないと解けない領域
 ];
 
 /* どこまでの手筋が要るか。帯とは別立てにして、山場の点数から引く */
@@ -1939,7 +2132,44 @@ function showVerdict(cells) {
     .map(([t, n]) => `<code>${t} ×${n}</code>`).join("");
   $("#explainBtn").disabled = analysis.steps.length === 0;
   $("#explainBtn").textContent = analysis.solved ? "解き方を1手ずつ見る" : "行き詰まるまでの手順を見る";
+  showCode(cells);
 }
+
+/* ---- コード番号：読み取った問題を、メーカー・プリンターと同じ番号で表す ---- */
+function showCode(cells) {
+  let code = null;
+  try { code = encodePuzzle(cells); } catch (e) { code = null; }
+  const box = $("#codeBox"), note = $("#codeNote");
+  if (!code) { box.hidden = true; note.hidden = true; return; }
+  box.hidden = false; note.hidden = false;
+  $("#codeVal").textContent = code;
+  $("#codeCopyBtn").textContent = "コピー";
+  note.textContent = "この番号を数独メーカー／数独プリンターに貼ると、同じ問題を呼び出せます。"
+    + (analysis && !analysis.solved ? "（仮置きが必要な問題なので、プリンターでは印刷から外れます）" : "");
+}
+
+$("#codeCopyBtn").addEventListener("click", async () => {
+  const text = $("#codeVal").textContent;
+  if (!text) return;
+  let ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
+  } catch (e) { ok = false; }
+  if (!ok) {                                   // file:// で開いたときの逃げ道
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+  }
+  const b = $("#codeCopyBtn");
+  b.textContent = ok ? "コピーしました" : "選んでコピーしてください";
+  if (!ok) {                                   // 手でコピーできるよう選んでおく
+    const r = document.createRange(); r.selectNodeContents($("#codeVal"));
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }
+  setTimeout(() => { b.textContent = "コピー"; }, 2000);
+});
 
 function clearMarks() {
   for (let i = 0; i < 81; i++) {
